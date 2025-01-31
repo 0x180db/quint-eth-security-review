@@ -1,18 +1,11 @@
 module primitives::erc20 {
     import types.* from "../types/types"
-
-    type State = {
-        symbol: str,
-        balances: Address -> Uint,
-        totalSupply: Uint,
-        decimals: Uint,
-    }
     
     pure def construct(
         symbol: str,
         balances: Address -> Uint,
         decimals: Uint,
-    ): State = {
+    ): types::erc20::State = {
         symbol: symbol,
         balances: balances,
         totalSupply: balances.keys().fold(0, (acc, k) => acc + balances.get(k)),
@@ -20,18 +13,18 @@ module primitives::erc20 {
     }
 
     pure def balanceOf(
-        state: State,
+        state: types::erc20::State,
         addr: Address,
     ): Uint = {
         state.balances.get(addr)
     }
 
     pure def _transfer(
-        state: State,
+        state: types::erc20::State,
         _from: Address,
         _to: Address,
         _value: Uint,
-    ): Result[State] = {
+    ): Result[types::erc20::State] = {
         if (_from == zeroAddress) {
             revert(state, "erc20: invalid sender")
         } else if (_to == zeroAddress) {
@@ -42,20 +35,20 @@ module primitives::erc20 {
     }
 
     pure def transfer(
-        state: State,
+        state: types::erc20::State,
         _from: Address,
         _to: Address,
         _value: Uint,
-    ): Result[State] = {
+    ): Result[types::erc20::State] = {
         _transfer(state, _from, _to, _value)
     }
 
     pure def _update(
-        state: State,
+        state: types::erc20::State,
         _from: Address,
         _to: Address,
         _value: Uint,
-    ): Result[State] = {
+    ): Result[types::erc20::State] = {
         // Handle minting case (_from is zero address)
         if (_from == zeroAddress) {
             success({
@@ -92,10 +85,10 @@ module primitives::erc20 {
     }
     
     pure def mint(
-        state: State,
+        state: types::erc20::State,
         _account: Address,
         _value: Uint,
-    ): Result[State] = {
+    ): Result[types::erc20::State] = {
         if (_account == zeroAddress) {
             revert(state, "erc20: invalid receiver")
         } else {
@@ -104,10 +97,10 @@ module primitives::erc20 {
     }
 
     pure def burn(
-        state: State,
+        state: types::erc20::State,
         _account: Address,
         _value: Uint,
-    ): Result[State] = {
+    ): Result[types::erc20::State] = {
         if (_account == zeroAddress) {
             revert(state, "erc20: invalid sender")
         } else {

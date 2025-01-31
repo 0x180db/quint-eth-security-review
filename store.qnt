@@ -15,6 +15,15 @@ module store {
         evm: evm::construct(balances),
         log: List(),
     }
+
+    pure def prank(
+        state: State,
+        sender: Address,
+        value: Uint,
+    ): State = {
+        ...state,
+        evm: evm::withMessage(state.evm, sender, value)
+    }   
     
     pure def emit(state: State, e: Event): State = {
         ...state,

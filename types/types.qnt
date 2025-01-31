@@ -7,4 +7,10 @@ module types {
 
     import types::evm from "./evm"
     export types::evm 
+
+    import types::erc20 from "./erc20"
+    export types::erc20
+
+    import types::erc721 from "./erc721"
+    export types::erc721
 }
