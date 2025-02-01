@@ -1,12 +1,11 @@
 module types::common {
-    pure val zeroAddress = "0x"
+    pure val zeroAddress = 0
     pure val maxUint = 2^256 - 1
     pure val decimalShannon = 9
     pure val decimalSzabo = 6
     pure val decimalFinney = 3
 
-    type Address = str
-
+    type Address = int
     type Uint = int
 
     pure def isUint(i: int): bool = 

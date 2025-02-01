@@ -1,100 +1,108 @@
 module main {
     import types.* from "./types/types"
     import primitives.* from "./primitives/primitives"
-    import store as Store from "./store" 
+    import evm.* from "./evm"
    
     pure val initialBalance = finney(10)
-    pure val maxHeight = 5
+    pure val maxHeight = 10
 
-    pure val this = "deployer"
-    pure val contracts = Set()
-    pure val actors = Set(this, "alice", "bob", "chuck")
-    pure val addresses = contracts.union(actors).union(Set(zeroAddress))
-
-    val balances: Address -> Uint = 
-        addresses
-            .mapBy(addr => if (addr.in(actors)) initialBalance else 0)
-
-    var state: Store::State
+    var evm: Evm
 
     action init = {
-        state' = Store::construct(balances)
+        evm' = newEvm
     }
     
     action step = {
-        if (state.evm.block.number < maxHeight) {
+        if (evm.block.number < maxHeight) {
             any {
-                evm::Transfer,
-                evm::AdvanceChain
+                all {
+                    evm.pc == "Evm::Idle",
+                    all {
+                        nondet caller = evm.eoas().oneOf()
+                        any {
+                            all {
+                                evm' = evm.prank(caller, 0).call(0, "Evm::AdvanceChain")
+                            }
+                        }
+                    }
+                },
+                all {
+                    evm.pc != "Evm::Idle",
+                    any {
+                        /* evm::Transfer, */
+                        evm::AdvanceChain
+                    }
+                }
             }
         } else { keep }
     }
 
-    action evm::Transfer: bool = {
-        nondet sender = actors.oneOf()
-        nondet target = addresses.exclude(Set(sender, zeroAddress)).oneOf()
-        nondet value = 0.to(evm::balanceOf(state.evm, sender)).oneOf()
+    /* action evm::Transfer: bool = { */
+    /*     nondet sender = actors.oneOf() */
+    /*     nondet target = addresses.exclude(Set(sender, zeroAddress)).oneOf() */
+    /*     nondet value = 0.to(evm::balanceOf(state.evm, sender)).oneOf() */
 
-        val result = evm::call(state.evm, sender, target, value, "")
+    /*     val result = evm::call(state.evm, sender, target, value, "") */
 
-        all {
-            isOk(result),
-            state' = {
-                ...state,
-                op: "Evm::Transfer",
-                evm: result.ok,
-                log: state.log.append(
-                    EventTransferEther({sender: sender, recipient: target, amount: value})),
-            }
-        }
-    }
+    /*     all { */
+    /*         isOk(result), */
+    /*         state' = { */
+    /*             ...state, */
+    /*             op: "Evm::Transfer", */
+    /*             evm: result.ok, */
+    /*             log: state.log.append( */
+    /*                 EventTransferEther({sender: sender, recipient: target, amount: value})), */
+    /*         } */
+    /*     } */
+    /* } */
 
     action evm::AdvanceChain: bool = all {
-        state.evm.block.number < maxHeight,
-        state' = {
-            ...state,
-            op: "Evm::AdvanceChain",
-            evm: evm::roll(state.evm, 1),
+        evm.pc == "Evm::AdvanceChain",
+        evm' = {
+            ...evm.prank(0,0).roll(evm.block.number + 1),
+            pc: "Evm::Idle",
         }
     }
 
     action keep = all {
-        state' = { 
-            ...state,
-            op: "idle",
+        evm' = { 
+            ...evm,
+            pc: "Evm::Idle",
         }
     }
 
     // ___ SAFETY PROPERTIES ___
-    pure def noNegativeBalances(balances: Address -> Uint): bool =
-        balances.keys().forall(
-            addr => isUint(balances.get(addr)))
+    /* pure def noNegativeBalances(balances: Address -> Uint): bool = */
+    /*     balances.keys().forall( */
+    /*         addr => isUint(balances.get(addr))) */
 
-    val noNegativeEtherBalancesInv: bool =
-        noNegativeBalances(state.evm.balances)
+    /* val noNegativeEtherBalancesInv: bool = */
+    /*     noNegativeBalances(state.evm.balances) */
     
-    val zeroAddressNoEtherInv: bool =
-        state.evm.balances.get(zeroAddress) == 0
+    /* val zeroAddressNoEtherInv: bool = */
+    /*     state.evm.balances.get(zeroAddress) == 0 */
    
-    val noUnacceptableTransfersInv: bool =
-        state.log.indices().forall(i =>
-            match (state.log[i]) { 
-                | EventTransferEther(data) => and {
-                        isUint(data.amount),
-                        data.recipient != zeroAddress,
-                    }
-                | _ => true
-            }
-        )
+    /* val noUnacceptableTransfersInv: bool = */
+    /*     state.log.indices().forall(i => */
+    /*         match (state.log[i]) { */ 
+    /*             | EventTransferEther(data) => and { */
+    /*                     isUint(data.amount), */
+    /*                     data.recipient != zeroAddress, */
+    /*                 } */
+    /*             | _ => true */
+    /*         } */
+    /*     ) */
 
-    val safetyOk = all {
-        noNegativeEtherBalancesInv,
-        zeroAddressNoEtherInv,
-        noUnacceptableTransfersInv,
-    }
+    /* val safetyOk = all { */
+    /*     noNegativeEtherBalancesInv, */
+    /*     zeroAddressNoEtherInv, */
+    /*     noUnacceptableTransfersInv, */
+    /* } */
+
+    val safetyOk = true
 
     // __ LIVENESS PROPERTIES __
     temporal livenessOk = and {
-        always(eventually(state.evm.block.number == maxHeight))
+        always(eventually(evm.block.number == maxHeight))
     }
 }

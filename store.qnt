@@ -5,7 +5,6 @@ module store {
     type State = {
         op: str,
         evm: evm::State,
-        log: List[Event]
     }
     
     pure def construct(
