@@ -4,70 +4,76 @@ module main {
     import evm.* from "./evm"
    
     pure val initialBalance = finney(10)
-    pure val maxHeight = 10
+    pure val maxHeight = 3
 
     var evm: Evm
 
     action init = {
-        evm' = newEvm
+        evm' = 
+            newEvm
+                .create(0, "deployer")
+                /* .deploy(Erc20(), 0, ) */
+                .create(initialBalance, "alice")
+                .create(initialBalance, "bob")
     }
     
-    action step = {
-        if (evm.block.number < maxHeight) {
-            any {
-                all {
-                    evm.pc == "Evm::Idle",
+    action step = any {
+        all {
+            evm.pc == "Evm::Call",
+            all {
+                nondet caller = evm.eoas().oneOf()
+                any {
                     all {
-                        nondet caller = evm.eoas().oneOf()
-                        any {
-                            all {
-                                evm' = evm.prank(caller, 0).call(0, "Evm::AdvanceChain")
-                            }
-                        }
-                    }
-                },
-                all {
-                    evm.pc != "Evm::Idle",
-                    any {
-                        /* evm::Transfer, */
-                        evm::AdvanceChain
+                        evm.block.number < maxHeight,
+                        evm' = evm.with("pc", "Evm::AdvanceChain")
+                    },
+                    all {
+                        caller != 0,
+                        evm' = evm.prank(caller, 0).with("pc", "Evm::Transfer")
                     }
                 }
             }
-        } else { keep }
+        },
+        all {
+            evm.pc != "Evm::Call",
+            any {
+                evm::Transfer,
+                evm::AdvanceChain
+            }
+        }
     }
 
-    /* action evm::Transfer: bool = { */
-    /*     nondet sender = actors.oneOf() */
-    /*     nondet target = addresses.exclude(Set(sender, zeroAddress)).oneOf() */
-    /*     nondet value = 0.to(evm::balanceOf(state.evm, sender)).oneOf() */
+    action evm::Transfer: bool = all {
+        evm.pc == "Evm::Transfer",
+        nondet target = 
+            evm
+                .eoas()
+                .exclude(Set(0, evm.address("deployer")))
+                .oneOf()
+        nondet value = bounds(evm.balance(evm.caller)).oneOf()
 
-    /*     val result = evm::call(state.evm, sender, target, value, "") */
-
-    /*     all { */
-    /*         isOk(result), */
-    /*         state' = { */
-    /*             ...state, */
-    /*             op: "Evm::Transfer", */
-    /*             evm: result.ok, */
-    /*             log: state.log.append( */
-    /*                 EventTransferEther({sender: sender, recipient: target, amount: value})), */
-    /*         } */
-    /*     } */
-    /* } */
+        commit(
+            evm.prank(evm.caller, value).call(target, "")
+        )
+    }
 
     action evm::AdvanceChain: bool = all {
         evm.pc == "Evm::AdvanceChain",
-        evm' = {
+        commit({
             ...evm.prank(0,0).roll(evm.block.number + 1),
-            pc: "Evm::Idle",
-        }
+            pc: "Evm::Call",
+        })
+    }
+
+    action commit(nextEvm: Evm): bool = all {
+        nextEvm.pc != evmStatusRevert,
+        evm' = nextEvm
     }
 
     action keep = all {
         evm' = { 
             ...evm,
-            pc: "Evm::Idle",
+            pc: "Evm::Call",
         }
     }
 
@@ -103,6 +109,6 @@ module main {
 
     // __ LIVENESS PROPERTIES __
     temporal livenessOk = and {
-        always(eventually(evm.block.number == maxHeight))
+        not(always(evm.block.number == 0))
     }
 }

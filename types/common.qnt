@@ -43,4 +43,7 @@ module types::common {
 
     pure def finney(n: Uint): Uint =
         n * 10.ipow(decimalFinney)
+
+    pure def bounds(n: Uint): Set[Uint] =
+        Set(0, 1, n/2, n, n+1)
 }

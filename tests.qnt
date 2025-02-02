@@ -4,15 +4,23 @@ module test {
     /* import tests::erc721 from "./tests/erc721" */
     import evm.* from "./evm"
 
-    run store::okNewEvmTest = {
+    run evm::okNewEvmTest = {
         val evm = newEvm 
         assert(evm.state.keys().size() == 1)
     }
 
-    run store::okCallTest = {
+    run evm::okDealByTest = {
         val evm = 
             newEvm
-                .create(10)
+                .create(5, "alice")
+                .dealBy(1, (balance) => balance + 5)
+        assert(evm.balance(1) == 10)
+    }
+
+    run evm::okCallTest = {
+        val evm = 
+            newEvm
+                .create(10, "alice")
                 .prank(1, 5)
                 .call(0, "")
         and { 
@@ -25,7 +33,7 @@ module test {
         }
     }
 
-    run store::okDeployContractTest = {
+    run evm::okDeployContractTest = {
         val tokenContract = erc20::construct("ERC20", Map(), 6)
 
         val evm = 
@@ -35,19 +43,19 @@ module test {
         assert(evm.state.keys().size() == 2)
     }
     
-    run store::okGetContractStateTest = {
+    run evm::okGetContractStateTest = {
         val initilalContractState = erc20::construct("ERC20", Map(), 6)
 
         val evm = 
             newEvm
                 .deploy(Erc20(initilalContractState), 0, false)
         
-        val contractState = erc20::cast(evm.address(1))
+        val contractState = erc20::cast(evm.account(1))
  
         assert(contractState.symbol == "ERC20")
     }
 
-    run store::okReturnEoasSetContractTest = {
+    run evm::okReturnEoasSetContractTest = {
         val tokenContract = erc20::construct("ERC20", Map(), 6)
 
         val evm = 
@@ -57,7 +65,7 @@ module test {
         assert(evm.eoas() == Set(0))
     }
 
-    run store::okReturnContractsSetContractTest = {
+    run evm::okReturnContractsSetContractTest = {
         val tokenContract = erc20::construct("ERC20", Map(), 6)
 
         val evm = 

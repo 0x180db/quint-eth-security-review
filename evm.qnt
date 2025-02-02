@@ -2,7 +2,8 @@ module evm {
     import types.* from "./types/types"
     import primitives.* from "./primitives/primitives"
    
-    pure val idle = "Evm::Idle"
+    pure val evmStatusCall = "Evm::Call"
+    pure val evmStatusRevert = "Evm::Revert"
 
     type Msg = {
         sender: Address,
@@ -37,6 +38,7 @@ module evm {
     type Evm = {
         block: Block,
         state: Address -> Account,
+        alias: str -> Address,
         log: List[Event],
         pc: str,
         caller: Address,
@@ -47,11 +49,13 @@ module evm {
     pure def newEvm: Evm = {
         block: {number: 0},
         state: Map(0 -> Eoa({address: 0, balance: 0, isPayable: true})),
+        alias: Map("zero" -> 0),
         log: List(),
-        pc: idle,
+        pc: evmStatusCall,
         caller: 0,
         target: 0,
         value: 0,
+    
     }
 
     pure def roll(
@@ -67,7 +71,8 @@ module evm {
 
     pure def create(
         evm: Evm,
-        balance: Uint
+        balance: Uint,
+        alias: str,
     ): Evm = {
         val nextAddress = evm.state.keys().size()
         {
@@ -75,7 +80,8 @@ module evm {
             state: evm.state.put(
                 nextAddress,
                 Eoa({address: nextAddress, balance: balance, isPayable: true})
-            )
+            ),
+            alias: evm.alias.put(alias, nextAddress)
         }
     }
 
@@ -124,17 +130,24 @@ module evm {
         }
 
         if (isTransferPossible) {
-            val targetBalance = evm.balance(evm.target)
             evm
-                .deal(evm.caller, callerBalance - evm.value)
-                .deal(evm.target, targetBalance + evm.value )
+                .dealBy(evm.caller, (balance) => balance - evm.value)
+                .dealBy(target, (balance) => balance + evm.value )
                 .with("caller", 0)
                 .with("value", 0)
-                .with("pc", idle)
-        } else {
+                .with("pc", evmStatusCall)
+                .emit(EventTransferEther({
+                    sender: evm.caller, 
+                    recipient: target,
+                    amount: evm.value
+                }))
+
+        } else if (evm.isContract(evm.target)) {
             evm
                 .with("pc", method)
                 .with("target", target)
+        } else {
+            evm.reject()
         }
     }
 
@@ -142,10 +155,10 @@ module evm {
         evm: Evm,
         addr: Address,
     ): Uint = {
-        val account = evm.address(addr)
-        match account {
-            | Eoa(acc) => acc.balance
-            | Contract(acc) => acc.balance
+        val acc = evm.account(addr)
+        match acc {
+            | Eoa(a) => a.balance
+            | Contract(a) => a.balance
             | _ => 0
         }
     }
@@ -155,12 +168,30 @@ module evm {
         addr: Address,
         newBalance: Uint,
     ): Evm = {
-        val account = evm.address(addr)
+        val acc = evm.account(addr)
         val nextAccount = 
-            match account {
+            match acc {
                 | Eoa(acc) => Eoa(acc.with("balance", newBalance))
                 | Contract(acc) => Contract(acc.with("balance", newBalance))
-                | _ => account
+                | _ => acc
+            }
+        {
+            ...evm,
+            state: evm.state.set(addr, nextAccount)    
+        }
+    }
+
+    pure def dealBy(
+        evm: Evm,
+        addr: Address,
+        update: Uint => Uint,
+    ): Evm = {
+        val acc = evm.account(addr)
+        val nextAccount = 
+            match acc {
+                | Eoa(acc) => Eoa(acc.with("balance", update(acc.balance)))
+                | Contract(acc) => Contract(acc.with("balance", update(acc.balance)))
+                | _ => acc
             }
         {
             ...evm,
@@ -169,6 +200,13 @@ module evm {
     }
 
     pure def address(
+        evm: Evm,
+        alias: str,
+    ): Uint = {
+        evm.alias.get(alias)
+    }
+
+    pure def account(
         evm: Evm,
         addr: Address
     ): Account = {
@@ -183,20 +221,26 @@ module evm {
         evm: Evm,
         addr: Address
     ): bool = {
-        val account = evm.address(addr)
-        match account {
-            | Eoa(acc) => false
-            | Contract(acc) => true
+        val acc = evm.account(addr)
+        match acc {
+            | Eoa(_) => false
+            | Contract(_) => true
             | _ => false
         }
-    } 
+    }
+ 
+    pure def addresses(
+        evm: Evm
+    ): Set[Uint] = {
+       evm.state.keys()
+    }
 
     pure def eoas(
         evm: Evm
     ): Set[Uint] = {
         evm.state.keys().fold(Set(), (result, addr) => {
-            val account = evm.address(addr)
-            match account {
+            val acc = evm.account(addr)
+            match acc {
                 | Eoa(_) => result.union(Set(addr))
                 | Contract(_) => result
                 | _ => result
@@ -208,8 +252,8 @@ module evm {
         evm: Evm
     ): Set[Uint] = {
         evm.state.keys().fold(Set(), (result, addr) => {
-            val account = evm.address(addr)
-            match account {
+            val acc = evm.account(addr)
+            match acc {
                 | Eoa(_) => result
                 | Contract(_) => result.union(Set(addr))
                 | _ => result
@@ -231,14 +275,29 @@ module evm {
         caller: 0,
         target: 0,
         value: 0,
-        pc: idle,
+        pc: evmStatusCall,
+    }
+
+    pure def reject(
+        evm: Evm
+    ): Evm = {
+        ...evm.cancel(),
+        pc: evmStatusRevert,
+    }
+
+    pure def emit(
+        evm: Evm,
+        e: Event
+    ): Evm = {
+        ...evm,
+        log: evm.log.append(e),
     }
 
     pure def erc20::cast(
-        account: Account
+        acc: Account
     ): types::erc20::State = {
         val default = erc20::construct("", Map(), 0)
-        match account {
+        match acc {
             | Contract(acc) => {
                 match acc.state {
                     | Erc20(state) => state
