@@ -7,14 +7,17 @@ module main {
     pure val maxHeight = 3
 
     var evm: Evm
+    
+    val usdt = 
+        erc20::construct("USDT", Map(1 -> finney(10)), decimalFinney)
 
     action init = {
         evm' = 
             newEvm
                 .create(0, "deployer")
-                /* .deploy(Erc20(), 0, ) */
                 .create(initialBalance, "alice")
                 .create(initialBalance, "bob")
+                .deploy(Erc20(usdt), 0, "usdt", false)
     }
     
     action step = any {
@@ -29,7 +32,18 @@ module main {
                     },
                     all {
                         caller != 0,
+                        evm.balance(caller) > 0,
                         evm' = evm.prank(caller, 0).with("pc", "Evm::Transfer")
+                    },
+                    all {
+                        val transferableTokens = filterErc20Contracts(evm, (state) => {
+                            erc20::balanceOf(state, caller) > 0
+                        })
+                        all {
+                            transferableTokens.size() > 0,
+                            nondet target = transferableTokens.oneOf()
+                            evm' = evm.prank(caller, 0).call(target, "Erc20::Transfer")
+                        }
                     }
                 }
             }
@@ -37,9 +51,27 @@ module main {
         all {
             evm.pc != "Evm::Call",
             any {
+                erc20::Transfer,
                 evm::Transfer,
                 evm::AdvanceChain
             }
+        }
+    }
+
+    action erc20::Transfer: bool = all {
+        evm.pc == "Erc20::Transfer",
+        nondet recipient = 
+            evm
+                .eoas()
+                .exclude(Set(0, evm.address("deployer")))
+                .oneOf()
+        val token = erc20::cast(evm.account(evm.target))
+        nondet value = bounds(erc20::balanceOf(token, evm.caller)).oneOf()
+        all {
+            value > 0,
+            commit(
+                erc20::safeTransfer(evm, recipient, value)
+            )
         }
     }
 
@@ -59,15 +91,14 @@ module main {
 
     action evm::AdvanceChain: bool = all {
         evm.pc == "Evm::AdvanceChain",
-        commit({
-            ...evm.prank(0,0).roll(evm.block.number + 1),
-            pc: "Evm::Call",
-        })
+        commit(
+            evm.roll(evm.block.number + 1),
+        )
     }
 
     action commit(nextEvm: Evm): bool = all {
         nextEvm.pc != evmStatusRevert,
-        evm' = nextEvm
+        evm' = nextEvm.purge()
     }
 
     action keep = all {
@@ -76,7 +107,25 @@ module main {
             pc: "Evm::Call",
         }
     }
-
+    
+    pure def filterErc20Contracts(
+        evm: Evm,
+        pred: (types::erc20::State) => bool
+    ): Set[Uint] = {
+        evm.contracts().fold(Set(), (result, addr) => {
+            match evm.account(addr) {
+                | Contract(c) =>
+                    match c.state {
+                        | Erc20(state) => 
+                            if (pred(state)) { 
+                                result.union(Set(c.address))
+                            } else { result }
+                        | _ => result
+                    }
+                | _ => result
+            }
+        })
+    }
     // ___ SAFETY PROPERTIES ___
     /* pure def noNegativeBalances(balances: Address -> Uint): bool = */
     /*     balances.keys().forall( */

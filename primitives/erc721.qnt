@@ -16,7 +16,7 @@ module primitives::erc721 {
         owner: Address,
     ): Result[Uint] = {
         if (owner == zeroAddress) {
-            revert(0, "erc721: invalid owner")
+            failure(0, "erc721: invalid owner")
         } else {
             success(state.balances.get(owner))
         }
@@ -60,7 +60,7 @@ module primitives::erc721 {
             } else { "" }
 
         if (authErr != "") {
-            (revert(state, authErr), zeroAddress)
+            (failure(state, authErr), zeroAddress)
         } else {
             val nextFromBalance =
                 if (_from != zeroAddress) {
@@ -94,14 +94,14 @@ module primitives::erc721 {
         _tokenId: Uint,
     ): Result[types::erc721::State] = {
         if (_to == zeroAddress) {
-            revert(state, "erc721: invalid receiver")
+            failure(state, "erc721: invalid receiver")
         } else {
             val result = _update(state, _to, _tokenId, _from)  
             
             if (isErr(result._1)) {
-                revert(state, result._1.err)
+                failure(state, result._1.err)
             } else if (result._2 != _from) {
-                revert(state, "erc721: incorrect owner")
+                failure(state, "erc721: incorrect owner")
             } else {
                 success(result._1.ok)
             }
@@ -134,7 +134,7 @@ module primitives::erc721 {
     ): Result[Address] = {
         val owner = _ownerOf(state, tokenId)
         if (owner == zeroAddress) {
-            revert(owner, "erc721: non existent token")
+            failure(owner, "erc721: non existent token")
         } else {
             success(owner)
         }
@@ -170,14 +170,14 @@ module primitives::erc721 {
         _tokenId: Uint,
     ): Result[types::erc721::State] = {
         if (_to == zeroAddress) {
-            revert(state, "erc721: invalid receiver")
+            failure(state, "erc721: invalid receiver")
         } else {
             val result = _update(state, _to, _tokenId, zeroAddress)  
             
             if (isErr(result._1)) {
-                revert(state, result._1.err)
+                failure(state, result._1.err)
             } else if (result._2 != zeroAddress) {
-                revert(state, "erc721: invalid sender")
+                failure(state, "erc721: invalid sender")
             } else {
                 success(result._1.ok)
             }

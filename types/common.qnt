@@ -18,7 +18,7 @@ module types::common {
         err: "",
     }
 
-    pure def revert(
+    pure def failure(
         value: a,
         reason: str,
     ): Result[a] = { 
@@ -34,6 +34,16 @@ module types::common {
     
     pure def andRequire(prevErr: str, cond: bool, msg: str): str = 
         if (prevErr != "") prevErr else require(cond, msg)
+    
+    pure def getOrElse(m: a -> b, key: a, default: b): b =
+        if (key.in(m.keys())) m.get(key) else default
+
+    pure def safeSetBy(m: a -> b, key: a, default: b, fn: (b) => b): a -> b =
+        if (key.in(m.keys())) {
+            m.setBy(key, (v) => fn(v)) 
+        } else{
+            m.put(key, default).setBy(key, (v) => fn(v))
+        }
 
     pure def shannon(n: Uint): Uint =
         n * 10.ipow(decimalShannon)

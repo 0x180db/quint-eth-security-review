@@ -1,6 +1,5 @@
 module evm {
     import types.* from "./types/types"
-    import primitives.* from "./primitives/primitives"
    
     pure val evmStatusCall = "Evm::Call"
     pure val evmStatusRevert = "Evm::Revert"
@@ -37,6 +36,7 @@ module evm {
    
     type Evm = {
         block: Block,
+        totalSupply: Uint,
         state: Address -> Account,
         alias: str -> Address,
         log: List[Event],
@@ -48,6 +48,7 @@ module evm {
 
     pure def newEvm: Evm = {
         block: {number: 0},
+        totalSupply: 0,
         state: Map(0 -> Eoa({address: 0, balance: 0, isPayable: true})),
         alias: Map("zero" -> 0),
         log: List(),
@@ -81,7 +82,8 @@ module evm {
                 nextAddress,
                 Eoa({address: nextAddress, balance: balance, isPayable: true})
             ),
-            alias: evm.alias.put(alias, nextAddress)
+            totalSupply: evm.totalSupply + balance,
+            alias: if (alias != "") evm.alias.put(alias, nextAddress) else evm.alias,
         }
     }
 
@@ -89,11 +91,14 @@ module evm {
         evm: Evm,
         state: ContractState,
         balance: Uint, 
+        alias: str,
         isPayable: bool,
     ): Evm = {
         val nextAddress = evm.state.keys().size()
         {
             ...evm,
+            totalSupply: evm.totalSupply + balance,
+            alias: if (alias != "") evm.alias.put(alias, nextAddress) else evm.alias,
             state: evm.state.put(
                 nextAddress,
                 Contract({
@@ -103,6 +108,23 @@ module evm {
                     isPayable: isPayable
                 })
             )
+        }
+    }
+
+    pure def setState(
+        evm: Evm,
+        addr: Address,
+        nextState: ContractState
+    ): Evm = {
+        val acc = evm.account(addr)
+        val nextAccount = 
+            match acc {
+                | Contract(acc) => Contract(acc.with("state", nextState))
+                | _ => acc
+            }
+        {
+            ...evm,
+            state: evm.state.set(addr, nextAccount)    
         }
     }
 
@@ -121,33 +143,42 @@ module evm {
         target: Address,
         method: str
     ): Evm = {
-        val callerBalance = evm.balance(evm.caller)
+        if (evm.isContract(target)) {
+            if ((method == "") and evm.isPayable(target)) {
+                evm.transfer(evm.caller, target, evm.value)
+            } else {
+                evm
+                    .with("pc", method)
+                    .with("target", target)
+            }
+        } else {
+            evm.transfer(evm.caller, target, evm.value)
+        }
+    }
 
+    pure def transfer(
+        evm: Evm,
+        sender: Address,
+        recipient: Address,
+        value: Uint
+    ): Evm = {
         val isTransferPossible = and {
-            evm.value > 0,
-            callerBalance >= evm.value,
-            not(evm.isContract(evm.target))
+            value > 0,
+            evm.balance(sender) >= value,
         }
 
         if (isTransferPossible) {
             evm
-                .dealBy(evm.caller, (balance) => balance - evm.value)
-                .dealBy(target, (balance) => balance + evm.value )
-                .with("caller", 0)
-                .with("value", 0)
-                .with("pc", evmStatusCall)
+                .dealBy(sender, (balance) => balance - value)
+                .dealBy(recipient, (balance) => balance + value )
                 .emit(EventTransferEther({
-                    sender: evm.caller, 
-                    recipient: target,
-                    amount: evm.value
+                    sender: sender, 
+                    recipient: recipient,
+                    amount: value
                 }))
-
-        } else if (evm.isContract(evm.target)) {
-            evm
-                .with("pc", method)
-                .with("target", target)
-        } else {
-            evm.reject()
+                .purge()
+        else {
+            evm.revert("evm: insufficient balance")
         }
     }
 
@@ -228,7 +259,19 @@ module evm {
             | _ => false
         }
     }
- 
+
+    pure def isPayable(
+        evm: Evm,
+        addr: Address
+    ): bool = {
+        val acc = evm.account(addr)
+        match acc {
+            | Eoa(a) => a.isPayable
+            | Contract(a) => a.isPayable 
+            | _ => false
+        }
+    }
+
     pure def addresses(
         evm: Evm
     ): Set[Uint] = {
@@ -268,7 +311,7 @@ module evm {
         value: evm.value
     }
 
-    pure def cancel(
+    pure def purge(
         evm: Evm
     ): Evm = {
         ...evm,
@@ -278,10 +321,11 @@ module evm {
         pc: evmStatusCall,
     }
 
-    pure def reject(
-        evm: Evm
+    pure def revert(
+        evm: Evm,
+        reason: str
     ): Evm = {
-        ...evm.cancel(),
+        ...evm.purge(),
         pc: evmStatusRevert,
     }
 
@@ -292,20 +336,4 @@ module evm {
         ...evm,
         log: evm.log.append(e),
     }
-
-    pure def erc20::cast(
-        acc: Account
-    ): types::erc20::State = {
-        val default = erc20::construct("", Map(), 0)
-        match acc {
-            | Contract(acc) => {
-                match acc.state {
-                    | Erc20(state) => state
-                    | _ => default
-                }
-            }
-            | _ => default
-        }
-    }
-    
 }

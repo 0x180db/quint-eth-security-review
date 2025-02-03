@@ -38,7 +38,7 @@ module test {
 
         val evm = 
             newEvm
-                .deploy(Erc20(tokenContract), 0, false)
+                .deploy(Erc20(tokenContract), 0, "", false)
     
         assert(evm.state.keys().size() == 2)
     }
@@ -48,29 +48,29 @@ module test {
 
         val evm = 
             newEvm
-                .deploy(Erc20(initilalContractState), 0, false)
+                .deploy(Erc20(initilalContractState), 0, "", false)
         
         val contractState = erc20::cast(evm.account(1))
  
         assert(contractState.symbol == "ERC20")
     }
 
-    run evm::okReturnEoasSetContractTest = {
+    run evm::okReturnSetOfEoaAddressTest = {
         val tokenContract = erc20::construct("ERC20", Map(), 6)
 
         val evm = 
             newEvm
-                .deploy(Erc20(tokenContract), 0, false)
+                .deploy(Erc20(tokenContract), 0, "", false)
     
         assert(evm.eoas() == Set(0))
     }
 
-    run evm::okReturnContractsSetContractTest = {
+    run evm::okReturnSetOfContractAddressTest = {
         val tokenContract = erc20::construct("ERC20", Map(), 6)
 
         val evm = 
             newEvm
-                .deploy(Erc20(tokenContract), 0, false)
+                .deploy(Erc20(tokenContract), 0, "", false)
     
         assert(evm.contracts() == Set(1))
     }
