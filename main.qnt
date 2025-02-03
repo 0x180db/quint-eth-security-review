@@ -10,6 +10,9 @@ module main {
     
     val usdt = 
         erc20::construct("USDT", Map(1 -> finney(10)), decimalFinney)
+    
+    val nft = 
+        erc721::construct("NFT", Map(1 -> 1), Map(1 -> 1))
 
     action init = {
         evm' = 
@@ -18,6 +21,7 @@ module main {
                 .create(initialBalance, "alice")
                 .create(initialBalance, "bob")
                 .deploy(Erc20(usdt), 0, "usdt", false)
+                .deploy(Erc721(nft), 0, "nft", false)
     }
     
     action step = any {
@@ -44,6 +48,16 @@ module main {
                             nondet target = transferableTokens.oneOf()
                             evm' = evm.prank(caller, 0).call(target, "Erc20::Transfer")
                         }
+                    },
+                    all {
+                        val transferableTokens = filterErc721Contracts(evm, (state) => {
+                            erc721::balanceOf(state, caller).ok > 0
+                        })
+                        all {
+                            transferableTokens.size() > 0,
+                            nondet target = transferableTokens.oneOf()
+                            evm' = evm.prank(caller, 0).call(target, "Erc721::TransferFrom")
+                        }
                     }
                 }
             }
@@ -51,10 +65,32 @@ module main {
         all {
             evm.pc != "Evm::Call",
             any {
+                erc721::TransferFrom,
                 erc20::Transfer,
                 evm::Transfer,
                 evm::AdvanceChain
             }
+        }
+    }
+
+    action erc721::TransferFrom: bool = all {
+        evm.pc == "Erc721::TransferFrom",
+        nondet recipient = 
+            evm
+                .eoas()
+                .exclude(Set(0, evm.address("deployer")))
+                .oneOf()
+        val nft = 
+            erc721::cast(evm.account(evm.target))
+        nondet tokenId = 
+            nft.owners.keys()
+                .filter(id => erc721::ownerOf(nft, id).ok == evm.caller)
+                .oneOf()
+
+        all {
+            commit(
+                erc721::transferFrom(evm, evm.caller, recipient, tokenId)
+            )
         }
     }
 
@@ -117,6 +153,25 @@ module main {
                 | Contract(c) =>
                     match c.state {
                         | Erc20(state) => 
+                            if (pred(state)) { 
+                                result.union(Set(c.address))
+                            } else { result }
+                        | _ => result
+                    }
+                | _ => result
+            }
+        })
+    }
+
+    pure def filterErc721Contracts(
+        evm: Evm,
+        pred: (types::erc721::State) => bool
+    ): Set[Uint] = {
+        evm.contracts().fold(Set(), (result, addr) => {
+            match evm.account(addr) {
+                | Contract(c) =>
+                    match c.state {
+                        | Erc721(state) => 
                             if (pred(state)) { 
                                 result.union(Set(c.address))
                             } else { result }

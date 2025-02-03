@@ -1,5 +1,21 @@
 module primitives::erc721 {
     import types.* from "../types/types"
+    import evm.* from "../evm"
+
+    pure def cast(
+        acc: Account
+    ): types::erc721::State = {
+        val default = construct("", Map(), Map())
+        match acc {
+            | Contract(acc) => {
+                match acc.state {
+                    | Erc721(state) => state
+                    | _ => default
+                }
+            }
+            | _ => default
+        }
+    }
 
     pure def construct(
         symbol: str,
@@ -15,10 +31,10 @@ module primitives::erc721 {
         state: types::erc721::State,
         owner: Address,
     ): Result[Uint] = {
-        if (owner == zeroAddress) {
+        if (owner == 0) {
             failure(0, "erc721: invalid owner")
         } else {
-            success(state.balances.get(owner))
+            success(state.balances.getOrElse(owner, 0))
         }
     }
     
@@ -32,7 +48,7 @@ module primitives::erc721 {
     pure def totalSupply(
         state: types::erc721::State
     ): Uint = {
-        state.balances.keys().fold(0, (acc, k) => acc + state.balances.get(k))       
+        state.balances.keys().fold(0, (acc, k) => acc + state.balances.getOrElse(k, 0))       
     }
 
     pure def safeSetOwner(
@@ -55,66 +71,67 @@ module primitives::erc721 {
     ): (Result[types::erc721::State], Address) = {
         val _from = _ownerOf(state, _tokenId)
         val authErr = 
-            if (_auth != zeroAddress) {
+            if (_auth != 0) {
                 _checkAuthorized(_from, _auth, _tokenId)
             } else { "" }
 
         if (authErr != "") {
-            (failure(state, authErr), zeroAddress)
+            (failure(state, authErr), 0)
         } else {
-            val nextFromBalance =
-                if (_from != zeroAddress) {
-                    state.balances.get(_from) - 1
-                } else {
-                    state.balances.get(_from)
-                }
-            val nextToBalance =
-                if (_to != zeroAddress) {
-                    state.balances.get(_to) + 1
-                } else {
-                    state.balances.get(_to)
-                }
-            
-            val nexttypes::erc721::State = {
+            val nextState = {
                 ...state,
                 balances: state.balances
-                            .set(_from, nextFromBalance)
-                            .set(_to, nextToBalance),
+                            .safeSetBy(_from, 0, (balance) => 
+                                if (_from != 0) balance - 1 else balance
+                            )
+                            .safeSetBy(_to, 0, (balance) => 
+                                if (_from != 0) balance + 1 else balance
+                            ),
                 owners: safeSetOwner(state.owners, _tokenId, _to)
             }
 
-            (success(nexttypes::erc721::State), _from)
+            (success(nextState), _from)
         }
     }
 
     pure def transferFrom(
-        state: types::erc721::State, 
+        evm: Evm,
         _from: Address,
         _to: Address,
         _tokenId: Uint,
-    ): Result[types::erc721::State] = {
-        if (_to == zeroAddress) {
-            failure(state, "erc721: invalid receiver")
+    ): Evm = {
+        val state = cast(evm.account(evm.target))
+
+        if _to == 0) {
+            evm.revert("erc721: invalid receiver")
         } else {
             val result = _update(state, _to, _tokenId, _from)  
             
             if (isErr(result._1)) {
-                failure(state, result._1.err)
+                evm.revert(result._1.err)
             } else if (result._2 != _from) {
-                failure(state, "erc721: incorrect owner")
+                evm.revert("erc721: incorrect owner")
             } else {
-                success(result._1.ok)
+                evm
+                    .setState(evm.target, Erc721(result._1.ok))
+                    .emit(
+                        EventTransferErc721({
+                            sender: _from,
+                            recipient: _to,
+                            tokenId: _tokenId
+                        })   
+                    )
             }
         }
     }
 
     pure def safeTransferFrom(
-        state: types::erc721::State, 
+        evm: Evm,
         _from: Address,
         _to: Address,
         _tokenId: Uint,
-    ): Result[types::erc721::State] = {
-        transferFrom(state, _from, _to, _tokenId)
+    ): Evm = {
+        transferFrom(evm, _from, _to, _tokenId)
     }
     
     pure def _ownerOf(
@@ -122,9 +139,64 @@ module primitives::erc721 {
         tokenId: Uint,
     ): Address = {
         if (tokenId.in(state.owners.keys())) {
-            state.owners.get(tokenId)
+            state.owners.getOrElse(tokenId, 0)
         } else {
-            zeroAddress
+            0
+        }
+    }
+
+    pure def mint(
+        evm: Evm,
+        _to: Address,
+        _tokenId: Uint,
+    ): Evm = {
+        val state = cast(evm.account(evm.target))
+
+        if (_to == 0) {
+            evm.revert("erc721: invalid receiver")
+        } else {
+            val result = _update(state, _to, _tokenId, 0)  
+            
+            if (isErr(result._1)) {
+                evm.revert(result._1.err)
+            } else if (result._2 != 0) {
+                evm.revert("erc721: invalid sender")
+            } else {
+                evm
+                    .setState(evm.target, Erc721(result._1.ok))
+                    .emit(
+                        EventTransferErc721({
+                            sender: 0,
+                            recipient: _to,
+                            tokenId: _tokenId
+                        })   
+                    )
+            }
+        }
+    }
+
+    pure def burn(
+        evm: Evm,
+        _tokenId: Uint,
+    ): Evm = {
+        val state = cast(evm.account(evm.target))
+
+        val result = _update(state, 0, _tokenId, 0)  
+        
+        if (isErr(result._1)) {
+            evm.revert(result._1.err)
+        } else if (result._2 != 0) {
+            evm.revert("erc721: Non existent token")
+        } else {
+            evm
+                .setState(evm.target, Erc721(result._1.ok))
+                .emit(
+                    EventTransferErc721({
+                        sender: 0,
+                        recipient: 0,
+                        tokenId: _tokenId
+                    })
+                )
         }
     }
 
@@ -133,7 +205,7 @@ module primitives::erc721 {
         tokenId: Uint,
     ): Result[Address] = {
         val owner = _ownerOf(state, tokenId)
-        if (owner == zeroAddress) {
+        if (owner == 0) {
             failure(owner, "erc721: non existent token")
         } else {
             success(owner)
@@ -145,7 +217,7 @@ module primitives::erc721 {
         spender: Address, 
         tokenId: Uint,
     ): bool = {
-        spender != zeroAddress and owner == spender 
+        spender != 0 and owner == spender 
     }
 
     pure def _checkAuthorized(
@@ -154,7 +226,7 @@ module primitives::erc721 {
         tokenId: Uint,
     ): str = {
         if (not(_isAuthorized(owner, spender, tokenId))) {
-            if (owner == zeroAddress) {
+            if (owner == 0) {
                 "erc721: non existent token"
             } else {
                 "erc721: insufficient approval"
@@ -164,23 +236,4 @@ module primitives::erc721 {
         }
     }
     
-    pure def mint(
-        state: types::erc721::State, 
-        _to: Address,
-        _tokenId: Uint,
-    ): Result[types::erc721::State] = {
-        if (_to == zeroAddress) {
-            failure(state, "erc721: invalid receiver")
-        } else {
-            val result = _update(state, _to, _tokenId, zeroAddress)  
-            
-            if (isErr(result._1)) {
-                failure(state, result._1.err)
-            } else if (result._2 != zeroAddress) {
-                failure(state, "erc721: invalid sender")
-            } else {
-                success(result._1.ok)
-            }
-        }
-    }
 }
